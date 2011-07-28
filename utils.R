@@ -50,23 +50,6 @@ build.tree <- function(data.file) {
   system("growlnotify -a R -s -m \"Completed Building TREE\"")
 }
 
-plot.prec.rec <- function(data.file) {
-   library("randomForest")
-   library("ROCR")
-   f <- read.csv(data.file,head=FALSE)
-   f <- rename.columns(f)
-   s=splitdf(f)
-   m=randomForest(y~.,data=s$trainset)
-   #m=glm(as.factor(y)~.,data=s$trainset, family=binomial(link="logit"))
-   predictions = predict(m,s$testset)
-   pred=prediction(predictions,s$testset$y)
-   perf <- performance(pred,"prec","rec")
-   merchant.name <-  extract.merchant.name(data.file)
-   pdf(paste("/tmp/rf/",merchant.name,".pdf",sep=""))
-   plot(perf)
-   dev.off()
-}
-
 
 write.summary <- function(data.file) {
   f <- read.csv(data.file,head=FALSE)
@@ -102,8 +85,27 @@ paste("Total Pages Viewed", mean(fpv), median(fpv), min(fpv), quantile(fpv,0.10)
 
 }
 
+fix.months <- function(f) {
+  for(i in 1:5) {
+   f[[paste("month",i,sep="_")]] <- 1.0*(f$mnt==i)
+  }
+  f
+}
+
+fix.weeks <- function(f) {
+  for(i in 1:6) {
+   f[[paste("week",i,sep="_")]] <- 1.0*(f$day.of.week==i)
+  }
+  f = subset(f, select = -c(day.of.week))
+  f
+} 
+
 load.file <- function (path) {
   f <- read.csv(path)
+  f <- fix.weeks(f)
+  f$hour.of.day.sq <- f$hour.of.day * f$hour.of.day
+#  f <- fix.months(f)
+#  print(names(f))
   s <- splitdf(f)
   s
 }
@@ -115,23 +117,60 @@ is.significant <- function(model, var) {
 }
 
 get.coefs <- function(model) {
+  print(names(model$coefficients))
   rx = c()
+  is.valid = TRUE
   for (n in 1:length(model$coefficients)) {
-    name = names(m$coefficients[n])
-    
-    if ((name == "(Intercept)") || is.significant(model,name)) {
-      rx = c(rx,m$coefficients[n])
-    } else {
-      rx = c(rx,0)
+    if(is.na(model$coefficients[n])) {
+      is.valid = FALSE
     }
   }
-#  names(rx)=names(model$coefficients)
-  rx
+  if(!is.valid) {
+    s <- paste(model$coefficients,collapse=",")
+  } else {
+    for (n in 1:length(model$coefficients)) {
+      name = names(model$coefficients[n])
+      
+      if ((name == "(Intercept)") || is.significant(model,name)) {
+        rx = c(rx,model$coefficients[n])
+      } else {
+        rx = c(rx,0)
+      }
+    }
+                                        #  names(rx)=names(model$coefficients)
+    s = paste(rx, collapse=",")
+  }
+  s
 }
 
 do.test <- function(file) {
   s <- load.file(file)
   m <- glm(as.factor(y)~.,data=s$trainset, family=binomial(link="logit"))
   coefs <- get.coefs(m)
-  coefs
+  paste(file,coefs,sep=",")
+}
+
+plot.prec.rec <- function(data.file, col="black", add=FALSE) {
+   library("ROCR")
+   s <- load.file(data.file)
+   m=glm(as.factor(y)~.,data=s$trainset, family=binomial(link="logit"))
+   predictions = predict(m,s$testset)
+   pred=prediction(predictions,s$testset$y)
+   perf <- performance(pred,"prec","rec")
+   merchant.name <-  extract.merchant.name(data.file)
+   add <- add && length(dev.list()) > 0
+   plot(perf, col=col, add=add)
+}
+
+do.all <- function(dir, fn, pattern="*.txt") {
+  library("survey")
+  #dir="/Users/karthik/work/runa/data/runa_prediction_data/extract/cleaned/"
+  files = list.files(dir,pattern=pattern,full.names=TRUE)
+  results = c()
+  for(data.file in files) {
+    r = fn(data.file)
+    print(r)
+    results <- c(r,results)
+  }
+  results
 }
